@@ -1,8 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
-import re
 import pandas as pd
-import time
+import re
+import json
 
 BASE_URL = "https://www.bakedeco.com"
 START_URL = "https://www.bakedeco.com/nav/brand.asp?pagestart=1&categoryID=0&price=0&manufacid=551&sortby=&clearance=0&va=1"
@@ -12,118 +12,211 @@ HEADERS = {
 }
 
 def get_product_links(start_url):
-    print(f"Fetching list page: {start_url} ...")
+    print(f"Fetching product list from: {start_url} ...")
     try:
         r = requests.get(start_url, headers=HEADERS)
+        if r.status_code != 200:
+            print(f"Failed to load page: {r.status_code}")
+            return []
+            
         soup = BeautifulSoup(r.content, "lxml")
-        
         product_links = set()
         
         for prd_column in soup.find_all("div", class_="prd_list_mid"):
             for link in prd_column.find_all("a", href=True):
                 href = link["href"]
                 if "detail.asp" in href:
-                    product_links.add(href)
+                    if href.startswith("http"):
+                        full_link = href
+                    else:
+                        clean_href = href.lstrip("/") 
+                        full_link = f"{BASE_URL}/{clean_href}"
                     
+                    product_links.add(full_link)
+        
         print(f"-> Found {len(product_links)} unique products.")
         return list(product_links)
         
     except Exception as e:
-        print(f"Error fetching list page: {e}")
+        print(f"Error fetching product list: {e}")
         return []
 
-def scrape_single_product(relative_url):
-    full_url = BASE_URL + relative_url if relative_url.startswith("/") else relative_url
-    
+def scrape_single_product(full_url):
     try:
         r = requests.get(full_url, headers=HEADERS)
+        if r.status_code != 200: 
+            return None
+            
         soup = BeautifulSoup(r.content, "lxml")
         
-        try:
-            h1_tag = soup.find("h1")
-            product_name = h1_tag.text.strip()
-            brand = product_name.split(" ")[0] 
-        except:
-            product_name = "N/A"
-            brand = "N/A"
-
-        item_num = "N/A"
-        mfr_id = "N/A"
-        
-        item_div = soup.find("div", class_="item-number")
-        if item_div:
-            raw_text = item_div.text.strip() # "Item # 25152 MFR: 25.311.87.0098 ..."
-            
-            if "Item #" in raw_text:
-                item_num = raw_text.split("Item #")[1].split("MFR")[0].strip()
-            
-            if "MFR:" in raw_text:
-                mfr_id = raw_text.split("MFR:")[1].split("UPC")[0].strip()
-
-        try:
-            price = soup.find("div", class_="price").text.strip()
-        except:
-            price = "N/A"
-
-        try:
-            stock_tag = soup.find("strong", string=re.compile("Stock"))
-            availability = stock_tag.text.strip() if stock_tag else "N/A"
-        except:
-            availability = "N/A"
-
-        image_url = "N/A"
-        img_container = soup.find("div", class_="prod-image-container")
-        if img_container:
-            img_tag = img_container.find("img")
-            if img_tag:
-                src = img_tag.get("src")
-                image_url = BASE_URL + src
-
-        main_cat = "N/A"
-        sub_cat = "N/A"
-        bread_div = soup.find("div", class_="bread")
-        if bread_div:
-            links = bread_div.find_all("a")
-            if len(links) > 1: main_cat = links[1].text.strip()
-            if len(links) > 2: sub_cat = links[2].text.strip()
-
-        return {
-            "Brand": brand,
-            "Product Name": product_name,
-            "Item Number": item_num,
-            "Manufacturer ID": mfr_id,
-            "Price": price,
-            "Availability": availability,
-            "Main Category": main_cat,
-            "Sub Category": sub_cat,
-            "Image URL": image_url,
-            "Page URL": full_url
+        data = {
+            "Item No.": "N/A",
+            "Mfr Catalog No.": "N/A",
+            "Group Name": "Silikomart", 
+            "Ecom Picture Name": "N/A",
+            "SAP Picture": "N/A",
+            "Inactive": "No",             # Default to No since page loaded
+            "Indent Item": "N/A",
+            "# In Stock": "N/A",          # Quantity not available in source
+            "Production Date": "N/A",     # Date not available in source (2)
+            "Item Description": "N/A",    # Main Title
+            "Stock Description": "N/A",   # Status (In Stock/Out of Stock)
+            "Warranty": "N/A",
+            "Serial Managed": "No",       # Default to No
+            "# List Price": "N/A",
+            "Main Category": "N/A",
+            "Sub1 Category": "N/A",
+            "Sub2 Category": "N/A",
+            "Short Description": "N/A"    # Technical Specs
         }
 
+        try:
+            h1 = soup.find("h1")
+            if h1:
+                prod_name = h1.text.strip()
+                data["Item Description"] = prod_name
+                
+                if "Silikomart" in prod_name:
+                    data["Group Name"] = "Silikomart"
+                else:
+                    data["Group Name"] = prod_name.split(" ")[0]
+        except: pass
+
+        try:
+            item_div = soup.find("div", class_="item-number")
+            if item_div:
+                raw_text = item_div.text.strip()
+                if "Item #" in raw_text:
+                    parts = raw_text.split("Item #")[1]
+                    val = parts.split("MFR")[0].split("|")[0].strip()
+                    data["Item No."] = val
+                
+                if "MFR" in raw_text:
+                    parts = raw_text.split("MFR")[1]
+                    val = parts.replace(":", "").split("UPC")[0].strip()
+                    data["Mfr Catalog No."] = val
+        except: pass
+
+        try:
+            price_div = soup.find("div", class_="price")
+            if price_div:
+                data["# List Price"] = price_div.text.strip().replace("Our Price:", "").strip()
+        except: pass
+
+        try:
+            status_found = "N/A"
+            
+            json_tag = soup.find("script", type="application/ld+json")
+            if json_tag:
+                try:
+                    ld_data = json.loads(json_tag.string)
+                    if isinstance(ld_data, list): ld_data = ld_data[0]
+                    offers = ld_data.get("offers", {})
+                    if isinstance(offers, list): offers = offers[0]
+                    
+                    availability = offers.get("availability", "")
+                    if "InStock" in availability:
+                        status_found = "In Stock"
+                    elif "OutOfStock" in availability:
+                        status_found = "Out of Stock"
+                    elif "PreOrder" in availability:
+                         status_found = "Backorder"
+                         
+                    # Try to find Quantity in JSON 
+                    qty = offers.get("inventoryLevel", {}).get("value")
+                    if qty:
+                        data["# In Stock"] = qty
+                except: pass
+
+            # Failsafe if status wasn't found in JSON, check page elements
+            if status_found == "N/A":
+                stock_strong = soup.find("strong", string=re.compile(r"^In Stock$", re.I))
+                if stock_strong:
+                    status_found = "In Stock"
+                else:
+                    other_strong = soup.find("strong", string=re.compile(r"Out of Stock|Backorder|Special Order", re.I))
+                    if other_strong:
+                        status_found = other_strong.text.strip()
+            
+            data["Stock Description"] = status_found
+            
+        except: pass
+
+        try:
+            img_container = soup.find("div", class_="prod-image-container")
+            if img_container:
+                img = img_container.find("img")
+                if img and img.get("src"):
+                    src = img["src"]
+                    if src.startswith("http"):
+                        full_img_url = src
+                    else:
+                        full_img_url = f"{BASE_URL}/{src.lstrip('/')}"
+                    
+                    data["Ecom Picture Name"] = full_img_url
+                    data["SAP Picture"] = full_img_url.split("/")[-1]
+        except: pass
+
+        try:
+            bread_div = soup.find("div", class_="bread")
+            if bread_div:
+                links = bread_div.find_all("a")
+                if len(links) > 1: data["Main Category"] = links[1].text.strip()
+                if len(links) > 2: data["Sub1 Category"] = links[2].text.strip()
+                if len(links) > 3: data["Sub2 Category"] = links[3].text.strip()
+        except: pass
+
+        try:
+            short_desc_div = soup.find("div", class_="desc short")
+            if short_desc_div:
+                clean_text = short_desc_div.get_text(separator=" | ").strip()
+                data["Short Description"] = clean_text[:500]
+            else:
+                meta_desc = soup.find("meta", attrs={"name": "description"})
+                if meta_desc:
+                    data["Short Description"] = meta_desc["content"].strip()
+                else:
+                    desc_div = soup.find("div", id="ndisplay")
+                    if desc_div:
+                        data["Short Description"] = desc_div.text.strip()[:200] + "..."
+        except: pass
+
+        return data
+
     except Exception as e:
-        print(f"Failed to scrape {full_url}: {e}")
+        print(f"Error scraping {full_url}: {e}")
         return None
 
 if __name__ == "__main__":
+    print("--- Starting Scraper ---")
     
-    links = get_product_links(START_URL)
+    all_links = get_product_links(START_URL)
     
-    all_data = []
-    
-    print("Starting data extraction...")
-    for i, link in enumerate(links):
-        print(f"[{i+1}/{len(links)}] Scraping: {link} ...")
-        
-        data = scrape_single_product(link)
-        if data:
-            all_data.append(data)
-        
-        time.sleep(0.5) 
-
-    if all_data:
-        print(f"Saving {len(all_data)} products to Excel...")
-        df = pd.DataFrame(all_data)
-        df.to_excel("Bakedeco_Full_Data.xlsx", index=False)
-        print("Success! File saved as 'Bakedeco_Full_Data.xlsx'")
+    if not all_links:
+        print("No products found. Please check the URL.")
     else:
-        print("No data was extracted.")
+        all_products = []
+        for i, link in enumerate(all_links):
+            print(f"[{i+1}/{len(all_links)}] Scraping: {link}")
+            product_data = scrape_single_product(link)
+            if product_data:
+                all_products.append(product_data)
+            
+        if all_products:
+            df = pd.DataFrame(all_products)
+            
+            cols = [
+                "Item No.", "Mfr Catalog No.", "Group Name", "Ecom Picture Name", 
+                "SAP Picture", "Inactive", "Indent Item", "# In Stock", 
+                "Production Date", "Item Description", "Stock Description", 
+                "Warranty", "Serial Managed", "# List Price", "Main Category", 
+                "Sub1 Category", "Sub2 Category", "Short Description"
+            ]
+            
+            df = df.reindex(columns=cols, fill_value="N/A")
+            
+            filename = "Bakedeco_Silikomart_Final.xlsx"
+            df.to_excel(filename, index=False)
+            print(f"\nSuccess! Saved {len(df)} records to '{filename}'.")
+        else:
+            print("\nNo data extracted.")
