@@ -3,7 +3,9 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import random
+import re
 
+# Initialize scraper
 scraper = cloudscraper.create_scraper()
 
 BASE_URL = "https://www.southernhospitality.co.nz"
@@ -18,7 +20,6 @@ def get_product_links(start_url):
             return []
 
         soup = BeautifulSoup(r.content, "lxml")
-        
         product_links = set()
         
         cards = soup.select("div.product-item-details")
@@ -39,81 +40,122 @@ def get_product_links(start_url):
 def scrape_single_product(product_url):
     try:
         time.sleep(random.uniform(1, 3)) 
-        
         r = scraper.get(product_url)
+        if r.status_code != 200:
+            return None
+
         soup = BeautifulSoup(r.content, "lxml")
         
-        h1 = soup.find("h1", class_="page-title")
-        item_desc = h1.text.strip() if h1 else "N/A"
-        
-        sku_div = soup.find("div", itemprop="sku")
-        item_no = sku_div.text.strip() if sku_div else "N/A"
-
-        mfr_no = "N/A"
-        th = soup.find("th", string="Manufacturer Part Number")
-        if th:
-            mfr_no = th.find_next_sibling("td").text.strip()
-
-        price_span = soup.find("span", class_="price")
-        list_price = price_span.text.strip() if price_span else "N/A"
-
-        stock_div = soup.find("div", class_="stock")
-        if stock_div:
-            stock_desc = stock_div.text.strip() # e.g. "In Stock"
-            is_in_stock = "Yes" if "In Stock" in stock_desc else "No"
-        else:
-            stock_desc = "N/A"
-            is_in_stock = "Unknown"
-
-        inactive = "Yes" if "Out of Stock" in stock_desc else "No"
-
-        main_cat = "N/A"
-        sub1_cat = "N/A"
-        sub2_cat = "N/A"
-        
-        breads = soup.select("div.breadcrumbs li")
-        if len(breads) > 1: main_cat = breads[1].text.strip()
-        if len(breads) > 2: sub1_cat = breads[2].text.strip()
-        if len(breads) > 3: sub2_cat = breads[3].text.strip()
-
-        short_desc_div = soup.find("div", class_="product-info-overview")
-        short_desc = short_desc_div.text.strip() if short_desc_div else "N/A"
-        
-        warranty = "Check Description" 
-
-        img_tag = soup.find("img", class_="gallery-placeholder__image")
-        if img_tag:
-            ecom_pic = img_tag.get("src")
-        else:
-            ecom_pic = "N/A"
-
-        group_name = "Silikomart" # Hardcoded based on URL
-        sap_picture = "Internal Data (Not Public)"
-        indent_item = "Internal Data (Not Public)"
-        prod_date = "Internal Data (Not Public)"
-        serial_manage = "Internal Data (Not Public)"
-
-        return {
-            "Item No": item_no,
-            "Mfr Catalog No": mfr_no,
-            "Group Name": group_name,
-            "Ecom Picture Name": ecom_pic,
-            "Sap Picture": sap_picture,
-            "Inactive": inactive,
-            "Indent Item": indent_item,
-            "In Stock": is_in_stock,
-            "Production Date": prod_date,
-            "Item Description": item_desc,
-            "Stock Description": stock_desc,
-            "Warranty": warranty,
-            "Serial Manage": serial_manage,
-            "List Price": list_price,
-            "Main Category": main_cat,
-            "Sub1 Category": sub1_cat,
-            "Sub2 Category": sub2_cat,
-            "Short Description": short_desc,
-            "Product URL": product_url
+        data = {
+            "Item No.": "N/A",
+            "Mfr Catalog No.": "N/A",
+            "Group Name": "Silikomart",
+            "Ecom Picture Name": "N/A",
+            "SAP Picture": "N/A",
+            "Inactive": "No",
+            "Indent Item": "N/A",
+            "# In Stock": "N/A",
+            "Production Date": "N/A",
+            "Item Description": "N/A",
+            "Stock Description": "N/A",
+            "Warranty": "N/A",
+            "Serial Managed": "No",
+            "# List Price": "N/A",
+            "Main Category": "N/A",
+            "Sub1 Category": "N/A",
+            "Sub2 Category": "N/A",
+            "Short Description": "N/A"
         }
+        
+        # --- 1. Item Description (Product Name) ---
+        h1 = soup.find("h1", class_="page-title")
+        if h1:
+            data["Item Description"] = h1.get_text(strip=True)
+
+        # --- 2. Item No. (SKU) ---
+        sku_div = soup.find("div", itemprop="sku")
+        if sku_div:
+            data["Item No."] = sku_div.text.strip()
+
+        # --- 3. Mfr Catalog No. ---
+        th = soup.find("th", string=re.compile(r"Manufacturer Part Number", re.I))
+        if th:
+            td = th.find_next_sibling("td")
+            if td:
+                data["Mfr Catalog No."] = td.text.strip()
+
+        # --- 4. Price ---
+        price_span = soup.find("span", class_="price")
+        if price_span:
+            data["# List Price"] = price_span.text.strip()
+
+        # --- 5. Stock Status ---
+        stock_container = soup.find("span", class_="stock-level")
+        if not stock_container:
+            stock_container = soup.find("div", class_="stock")
+
+        if stock_container:
+            status_text = stock_container.get_text(separator=" ").strip()
+            status_text = " ".join(status_text.split())
+            data["Stock Description"] = status_text
+            
+            if "Out of Stock" in status_text:
+                data["Inactive"] = "Yes"
+                data["# In Stock"] = "0"
+            elif "In Stock" in status_text:
+                data["Inactive"] = "No"
+                data["# In Stock"] = "In Stock"
+
+        # --- 6. Categories (FIXED LOGIC) ---
+        breads = soup.select("div.breadcrumbs li")
+        
+        # Shifted index by +1 to skip generic 'Categories' label
+        if len(breads) > 2: 
+            data["Main Category"] = breads[2].text.strip()
+        if len(breads) > 3: 
+            data["Sub1 Category"] = breads[3].text.strip()
+        if len(breads) > 4: 
+            data["Sub2 Category"] = breads[4].text.strip()
+
+        # --- 7. Short Description & Warranty ---
+        desc_tab = soup.find("div", id="product_description")
+        
+        if desc_tab:
+            inner_desc = desc_tab.find("div", class_="description")
+            if inner_desc:
+                full_desc_text = inner_desc.get_text(separator="\n", strip=True)
+            else:
+                full_desc_text = desc_tab.get_text(separator="\n", strip=True).replace("Product Description", "").strip()
+            
+            data["Short Description"] = full_desc_text
+            
+            # Smart Search for Warranty
+            warranty_match = re.search(r"(\d+\s*(?:year|month)s?[\s\-]*(?:warranty|guarantee))", full_desc_text, re.IGNORECASE)
+            if warranty_match:
+                data["Warranty"] = warranty_match.group(1).title()
+
+        # Fallback for Short Desc
+        if data["Short Description"] == "N/A" or not data["Short Description"]:
+             overview = soup.find("div", class_="product-info-overview")
+             if overview:
+                 data["Short Description"] = overview.text.strip()
+
+        # --- 8. Image URL ---
+        img_tag = soup.find("img", class_="gallery-placeholder__image")
+        if img_tag and img_tag.get("src"):
+             data["Ecom Picture Name"] = img_tag.get("src")
+        else:
+            main_img_div = soup.find("div", class_="gallery-placeholder")
+            if main_img_div:
+                img = main_img_div.find("img")
+                if img:
+                     data["Ecom Picture Name"] = img.get("src")
+
+        # --- 9. SAP Picture Name ---
+        if data["Ecom Picture Name"] != "N/A":
+             data["SAP Picture"] = data["Ecom Picture Name"].split("/")[-1]
+
+        return data
 
     except Exception as e:
         print(f"Error scraping {product_url}: {e}")
@@ -136,6 +178,17 @@ if __name__ == "__main__":
     if all_data:
         print("Saving to Excel...")
         df = pd.DataFrame(all_data)
+        
+        cols = [
+            "Item No.", "Mfr Catalog No.", "Group Name", "Ecom Picture Name", 
+            "SAP Picture", "Inactive", "Indent Item", "# In Stock", 
+            "Production Date", "Item Description", "Stock Description", 
+            "Warranty", "Serial Managed", "# List Price", "Main Category", 
+            "Sub1 Category", "Sub2 Category", "Short Description"
+        ]
+        
+        df = df.reindex(columns=cols, fill_value="N/A")
+        
         df.to_excel("SouthernHospitality_Full.xlsx", index=False)
         print("Done! File saved as 'SouthernHospitality_Full.xlsx'")
     else:
