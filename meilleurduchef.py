@@ -15,45 +15,35 @@ scraper = cloudscraper.create_scraper()
 
 def get_product_links(start_url):
     product_links = set()
-    next_url = start_url
     
-    print("Starting link collection...")
-    
-    while next_url:
-        print(f"Scanning page: {next_url}")
-        try:
-            time.sleep(random.uniform(1, 2))
-            r = scraper.get(next_url)
-            if r.status_code != 200:
-                print(f"Failed to load page: {r.status_code}")
-                break
-                
-            soup = BeautifulSoup(r.content, "lxml")
+    print(f"Scanning page: {start_url}")
+    try:
+        time.sleep(random.uniform(1, 2))
+        r = scraper.get(start_url)
+        if r.status_code != 200:
+            print(f"Failed to load page: {r.status_code}")
+            return []
             
-            cards = soup.select("div.card-product a.card-link")
-            if not cards: cards = soup.select("div.cell-content a")
-                
-            new_links = 0
-            for a in cards:
-                href = a.get('href')
-                if href and "/shop/" in href: 
-                    full_link = urljoin(BASE_URL, href)
-                    if full_link not in product_links:
-                        product_links.add(full_link)
-                        new_links += 1
+        soup = BeautifulSoup(r.content, "lxml")
+        
+        cards = soup.select("div.card-product a.card-link")
+        if not cards: 
+            cards = soup.select("div.cell-content a")
             
-            print(f"   -> Found {new_links} new products.")
-          
-            next_btn = soup.select_one("a[rel='next']")
-            if not next_btn: next_btn = soup.select_one("li.pagination-next a")
-                
-            if next_btn: next_url = urljoin(BASE_URL, next_btn['href'])
-            else: next_url = None 
-                
-        except Exception as e:
-            print(f"Error on list page: {e}")
-            break
+        new_links = 0
+        for a in cards:
+            href = a.get('href')
+            if href and "/shop/" in href: 
+                full_link = urljoin(BASE_URL, href)
+                if full_link not in product_links:
+                    product_links.add(full_link)
+                    new_links += 1
+        
+        print(f"   -> Found {new_links} products.")
             
+    except Exception as e:
+        print(f"Error on list page: {e}")
+        
     print(f"Total unique products found: {len(product_links)}")
     return list(product_links)
 
@@ -125,7 +115,7 @@ def scrape_single_product(url):
 
             except: continue
 
-        # Categories worst case option if not found in JSON, find through HTML which has anti bot and hard to bypass fr
+        # Categories worst case option if not found in JSON
         if data["Main Category"] == "N/A":
             nav_bread = soup.find("nav", id="breadcrumb")
             if nav_bread:
@@ -216,7 +206,7 @@ if __name__ == "__main__":
         df = df.reindex(columns=cols, fill_value="N/A")
         
         folder_name = "results"
-        file_name = "MeilleurDuChef_Silikomart_Test_5.xlsx"
+        file_name = "MeilleurDuChef_Silikomart_NoPage.xlsx"
         
         if not os.path.exists(folder_name):
             os.makedirs(folder_name)
