@@ -1,9 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import time
 import random
 import os
 import re
+import json
 
 BASE_URL = "https://www.silikomart.com/en/"
 HEADERS = {
@@ -46,28 +48,13 @@ def get_product_links_from_category(category_url):
         r = requests.get(start_url, headers=HEADERS)
         soup = BeautifulSoup(r.content, "lxml")
         
-        total_pages = 1
-        page_items = soup.select("ul.pages-items li.item a.page span")
-        valid_pages = [int(s.text) for s in page_items if s.text.isdigit()]
-        if valid_pages:
-            total_pages = max(valid_pages)
-            
-        print(f"  > Found {total_pages} page(s).")
+        items = soup.select("li.product-item a.product-item-photo")
+        for a in items:
+            if a.get('href'):
+                product_links.add(a['href'])
         
-        for page in range(1, total_pages + 1):
-            page_url = f"{category_url}?p={page}&product_list_limit=100"
-            if page > 1: # Avoid re-fetching page 1 if we want to be strictly efficient, but re-fetching ensures clean logic
-                r = requests.get(page_url, headers=HEADERS)
-                soup = BeautifulSoup(r.content, "lxml")
-            
-            items = soup.select("li.product-item a.product-item-photo")
-            
-            count_before = len(product_links)
-            for a in items:
-                if a.get('href'):
-                    product_links.add(a['href'])
-            
-            print(f"    Page {page}: Found {len(product_links) - count_before} new products.")
+        print(f"    Found {len(product_links)} products in this category.")
+        time.sleep(1) 
             
     except Exception as e:
         print(f"  Error processing category: {e}")
@@ -76,6 +63,7 @@ def get_product_links_from_category(category_url):
 
 def scrape_single_product(product_url):
     try:
+        time.sleep(random.uniform(0.5, 1.5))
         r = requests.get(product_url, headers=HEADERS)
         if r.status_code != 200:
             return None
@@ -106,39 +94,95 @@ def scrape_single_product(product_url):
         h1 = soup.find("h1", class_="page-title")
         if h1:
             data["Item Description"] = h1.get_text(strip=True)
-            
-        sku_div = soup.find("div", itemprop="sku")
-        if sku_div:
-            data["Item No."] = sku_div.get_text(strip=True)
-            data["Mfr Catalog No."] = data["Item No."]
 
-        price_box = soup.find("div", class_="product-info-price")
-        if price_box:
-            price_span = price_box.find("span", class_="price")
-            if price_span:
-                data["# List Price"] = price_span.get_text(strip=True)
+        try:
+            scripts = soup.find_all("script")
+            for script in scripts:
+                if script.string and "dlObjects" in script.string:
+                    match = re.search(r'var dlObjects=\[(.*?)\];', script.string, re.DOTALL)
+                    if match:
+                        json_str = match.group(1)
+                        dl_data = json.loads(json_str)
+                        
+                        if "ecommerce" in dl_data and "detail" in dl_data["ecommerce"]:
+                            prod_info = dl_data["ecommerce"]["detail"]["products"][0]
+                            
+                            # I read somewhere that Item No and MFR can often be the same
+                            if "id" in prod_info:
+                                data["Item No."] = prod_info["id"]
+                                data["Mfr Catalog No."] = prod_info["id"]
+                          
+                            if "dimension4" in prod_info:
+                                data["Stock Description"] = prod_info["dimension4"]
+                                if "In stock" in data["Stock Description"]:
+                                    data["# In Stock"] = "In Stock"
+                                    data["Inactive"] = "No"
+                                else:
+                                    data["Inactive"] = "Yes"
+                                    data["# In Stock"] = "0"
+                            
+                            if "price" in prod_info:
+                                data["# List Price"] = prod_info["price"]
 
-        stock_div = soup.find("div", class_="stock")
-        if stock_div:
-            status_text = stock_div.get_text(strip=True)
-            data["Stock Description"] = status_text
-            
-            if "out of stock" in status_text.lower():
-                data["Inactive"] = "Yes"
-                data["# In Stock"] = "0"
-            elif "in stock" in status_text.lower():
-                data["Inactive"] = "No"
+                            if "category" in prod_info and prod_info["category"]:
+                                cat_path = prod_info["category"].split("/")
+                                if len(cat_path) > 0: data["Main Category"] = cat_path[0]
+                                if len(cat_path) > 1: data["Sub1 Category"] = cat_path[1]
+                                if len(cat_path) > 2: data["Sub2 Category"] = cat_path[2]
+        except:
+            pass
 
-        overview = soup.find("div", itemprop="description")
-        if overview:
-            data["Short Description"] = overview.get_text(separator=" ", strip=True)
+        # Failsafe for categories not found
+        if data["Main Category"] == "N/A":
+            crumbs = soup.select("div.breadcrumbs ul.items li.item")
+            clean_crumbs = [c.get_text(strip=True) for c in crumbs if "Home" not in c.get_text()]
+            if len(clean_crumbs) > 0: data["Main Category"] = clean_crumbs[0]
+            if len(clean_crumbs) > 1: data["Sub1 Category"] = clean_crumbs[1]
+            if len(clean_crumbs) > 2: data["Sub2 Category"] = clean_crumbs[2]
 
-        crumbs = soup.select("div.breadcrumbs ul.items li.item")
-        clean_crumbs = [c.get_text(strip=True) for c in crumbs if "Home" not in c.get_text()]
-        
-        if len(clean_crumbs) > 0: data["Main Category"] = clean_crumbs[0]
-        if len(clean_crumbs) > 1: data["Sub1 Category"] = clean_crumbs[1]
-        if len(clean_crumbs) > 2: data["Sub2 Category"] = clean_crumbs[2]
+        # Failsafe for SKU not found
+        if data["Item No."] == "N/A":
+            ld_scripts = soup.find_all("script", type="application/ld+json")
+            for script in ld_scripts:
+                try:
+                    js_data = json.loads(script.string)
+                    if isinstance(js_data, list): js_data = js_data[0]
+                    
+                    if "sku" in js_data:
+                        data["Item No."] = js_data["sku"]
+                        data["Mfr Catalog No."] = js_data["sku"]
+                        
+                    if "offers" in js_data:
+                        offer = js_data["offers"]
+                        if isinstance(offer, list): offer = offer[0]
+                        
+                        avail = offer.get("availability", "")
+                        if "InStock" in avail:
+                            data["Stock Description"] = "In Stock"
+                            data["# In Stock"] = "In Stock"
+                            data["Inactive"] = "No"
+                        elif "OutOfStock" in avail:
+                            data["Stock Description"] = "Out of Stock"
+                            data["# In Stock"] = "0"
+                            data["Inactive"] = "Yes"
+                except: continue
+
+        if data["Stock Description"] == "N/A":
+            meta_avail = soup.find("meta", property="product:availability")
+            if meta_avail:
+                content = meta_avail.get("content", "").lower()
+                if "instock" in content:
+                    data["Stock Description"] = "In Stock"
+                    data["# In Stock"] = "In Stock"
+                    data["Inactive"] = "No"
+                else:
+                    data["Stock Description"] = "Out of Stock"
+                    data["# In Stock"] = "0"
+                    data["Inactive"] = "Yes"
+
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc:
+             data["Short Description"] = meta_desc["content"].strip()
 
         og_image = soup.find("meta", property="og:image")
         if og_image and og_image.get("content"):
@@ -151,11 +195,6 @@ def scrape_single_product(product_url):
         if data["Ecom Picture Name"] != "N/A":
             data["SAP Picture"] = data["Ecom Picture Name"].split("/")[-1]
 
-        if data["Short Description"] != "N/A":
-            warranty_match = re.search(r"(\d+\s*(?:year|month)s?[\s\-]*(?:warranty|guarantee))", data["Short Description"], re.IGNORECASE)
-            if warranty_match:
-                data["Warranty"] = warranty_match.group(1).title()
-
         return data
 
     except Exception as e:
@@ -166,27 +205,27 @@ if __name__ == "__main__":
     
     categories = get_category_links()
     
-    # Limit categories for testing
-    categories = categories[:2] 
-
     all_product_links = set()
 
     for cat in categories:
         links = get_product_links_from_category(cat)
         all_product_links.update(links)
+        if len(all_product_links):
+            break
         
     print(f"Total Unique Products Found: {len(all_product_links)}")
     
     all_data = []
-    
     link_list = list(all_product_links)
+    
+    print(f"\n--- SCRAPING {len(link_list)} PRODUCTS (TEST LIMIT) ---")
     
     for i, link in enumerate(link_list):
         print(f"[{i+1}/{len(link_list)}] Scraping: {link}")
         data = scrape_single_product(link)
         if data:
             all_data.append(data)
-      
+            
     if all_data:
         df = pd.DataFrame(all_data)
         
@@ -201,14 +240,13 @@ if __name__ == "__main__":
         df = df.reindex(columns=cols, fill_value="N/A")
         
         folder_name = "results"
-        file_name = "Silikomart_Full.xlsx"
+        file_name = "Silikomart_Final_Test.xlsx"
         
         if not os.path.exists(folder_name):
             os.makedirs(folder_name)
-            print(f"Created folder: {folder_name}")
             
         output_path = os.path.join(folder_name, file_name)
         df.to_excel(output_path, index=False)
-        print(f"Success! Saved to: {output_path}")
+        print(f"Success! Saved {len(df)} records to: {output_path}")
     else:
         print("No data extracted.")
