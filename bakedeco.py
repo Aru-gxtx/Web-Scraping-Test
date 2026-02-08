@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import json
+import os  # <--- Added to handle folders
 
 BASE_URL = "https://www.bakedeco.com"
 START_URL = "https://www.bakedeco.com/nav/brand.asp?pagestart=1&categoryID=0&price=0&manufacid=551&sortby=&clearance=0&va=1"
@@ -122,7 +123,6 @@ def scrape_single_product(full_url):
                     elif "PreOrder" in availability:
                          status_found = "Backorder"
                          
-                    # Try to find Quantity in JSON 
                     qty = offers.get("inventoryLevel", {}).get("value")
                     if qty:
                         data["# In Stock"] = qty
@@ -215,8 +215,16 @@ if __name__ == "__main__":
             
             df = df.reindex(columns=cols, fill_value="N/A")
             
-            filename = "Bakedeco_Silikomart_Final.xlsx"
-            df.to_excel(filename, index=False)
-            print(f"\nSuccess! Saved {len(df)} records to '{filename}'.")
+            folder_name = "results"
+            file_name = "Bakedeco_Silikomart_Final.xlsx"
+            
+            if not os.path.exists(folder_name):
+                os.makedirs(folder_name)
+                print(f"Created folder: {folder_name}")
+            
+            output_path = os.path.join(folder_name, file_name)
+            
+            df.to_excel(output_path, index=False)
+            print(f"\nSuccess! Saved {len(df)} records to '{output_path}'.")
         else:
             print("\nNo data extracted.")

@@ -4,8 +4,8 @@ import pandas as pd
 import time
 import random
 import re
+import os  # <--- Added to handle folders
 
-# Initialize scraper
 scraper = cloudscraper.create_scraper()
 
 BASE_URL = "https://www.southernhospitality.co.nz"
@@ -67,29 +67,29 @@ def scrape_single_product(product_url):
             "Short Description": "N/A"
         }
         
-        # --- 1. Item Description (Product Name) ---
         h1 = soup.find("h1", class_="page-title")
         if h1:
             data["Item Description"] = h1.get_text(strip=True)
+        # Failsafe if title not found in h1
+        else:
+            title_tag = soup.find("title")
+            if title_tag:
+                data["Item Description"] = title_tag.text.split("|")[0].strip()
 
-        # --- 2. Item No. (SKU) ---
         sku_div = soup.find("div", itemprop="sku")
         if sku_div:
             data["Item No."] = sku_div.text.strip()
 
-        # --- 3. Mfr Catalog No. ---
         th = soup.find("th", string=re.compile(r"Manufacturer Part Number", re.I))
         if th:
             td = th.find_next_sibling("td")
             if td:
                 data["Mfr Catalog No."] = td.text.strip()
 
-        # --- 4. Price ---
         price_span = soup.find("span", class_="price")
         if price_span:
             data["# List Price"] = price_span.text.strip()
 
-        # --- 5. Stock Status ---
         stock_container = soup.find("span", class_="stock-level")
         if not stock_container:
             stock_container = soup.find("div", class_="stock")
@@ -104,12 +104,8 @@ def scrape_single_product(product_url):
                 data["# In Stock"] = "0"
             elif "In Stock" in status_text:
                 data["Inactive"] = "No"
-                data["# In Stock"] = "In Stock"
 
-        # --- 6. Categories (FIXED LOGIC) ---
         breads = soup.select("div.breadcrumbs li")
-        
-        # Shifted index by +1 to skip generic 'Categories' label
         if len(breads) > 2: 
             data["Main Category"] = breads[2].text.strip()
         if len(breads) > 3: 
@@ -117,7 +113,6 @@ def scrape_single_product(product_url):
         if len(breads) > 4: 
             data["Sub2 Category"] = breads[4].text.strip()
 
-        # --- 7. Short Description & Warranty ---
         desc_tab = soup.find("div", id="product_description")
         
         if desc_tab:
@@ -128,19 +123,12 @@ def scrape_single_product(product_url):
                 full_desc_text = desc_tab.get_text(separator="\n", strip=True).replace("Product Description", "").strip()
             
             data["Short Description"] = full_desc_text
-            
-            # Smart Search for Warranty
-            warranty_match = re.search(r"(\d+\s*(?:year|month)s?[\s\-]*(?:warranty|guarantee))", full_desc_text, re.IGNORECASE)
-            if warranty_match:
-                data["Warranty"] = warranty_match.group(1).title()
 
-        # Fallback for Short Desc
         if data["Short Description"] == "N/A" or not data["Short Description"]:
              overview = soup.find("div", class_="product-info-overview")
              if overview:
                  data["Short Description"] = overview.text.strip()
 
-        # --- 8. Image URL ---
         img_tag = soup.find("img", class_="gallery-placeholder__image")
         if img_tag and img_tag.get("src"):
              data["Ecom Picture Name"] = img_tag.get("src")
@@ -151,7 +139,6 @@ def scrape_single_product(product_url):
                 if img:
                      data["Ecom Picture Name"] = img.get("src")
 
-        # --- 9. SAP Picture Name ---
         if data["Ecom Picture Name"] != "N/A":
              data["SAP Picture"] = data["Ecom Picture Name"].split("/")[-1]
 
@@ -176,7 +163,7 @@ if __name__ == "__main__":
             all_data.append(data)
             
     if all_data:
-        print("Saving to Excel...")
+        print("Processing data...")
         df = pd.DataFrame(all_data)
         
         cols = [
@@ -189,7 +176,16 @@ if __name__ == "__main__":
         
         df = df.reindex(columns=cols, fill_value="N/A")
         
-        df.to_excel("SouthernHospitality_Full.xlsx", index=False)
-        print("Done! File saved as 'SouthernHospitality_Full.xlsx'")
+        folder_name = "results"
+        file_name = "SouthernHospitality_Full.xlsx"
+        
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+            print(f"Created folder: {folder_name}")
+            
+        output_path = os.path.join(folder_name, file_name)
+        
+        df.to_excel(output_path, index=False)
+        print(f"Done! File saved successfully to: {output_path}")
     else:
         print("No data found. Check if the site is blocking the scraper.")
