@@ -96,6 +96,13 @@ def scrape_single_product(full_url):
                     parts = raw_text.split("MFR")[1]
                     val = parts.replace(":", "").split("UPC")[0].strip()
                     data["Mfr Catalog No."] = val
+
+            # Sync Item No and Mfr Catalog No if one is missing
+            if data["Item No."] == "N/A" and data["Mfr Catalog No."] != "N/A":
+                data["Item No."] = data["Mfr Catalog No."]
+            elif data["Mfr Catalog No."] == "N/A" and data["Item No."] != "N/A":
+                data["Mfr Catalog No."] = data["Item No."]
+                
         except: pass
 
         try:

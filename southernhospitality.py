@@ -4,7 +4,7 @@ import pandas as pd
 import time
 import random
 import re
-import os  # <--- Added to handle folders
+import os
 
 scraper = cloudscraper.create_scraper()
 
@@ -70,7 +70,6 @@ def scrape_single_product(product_url):
         h1 = soup.find("h1", class_="page-title")
         if h1:
             data["Item Description"] = h1.get_text(strip=True)
-        # Failsafe if title not found in h1
         else:
             title_tag = soup.find("title")
             if title_tag:
@@ -85,6 +84,12 @@ def scrape_single_product(product_url):
             td = th.find_next_sibling("td")
             if td:
                 data["Mfr Catalog No."] = td.text.strip()
+
+        # Sync Item No and Mfr Catalog No if one is missing
+        if data["Item No."] == "N/A" and data["Mfr Catalog No."] != "N/A":
+            data["Item No."] = data["Mfr Catalog No."]
+        elif data["Mfr Catalog No."] == "N/A" and data["Item No."] != "N/A":
+            data["Mfr Catalog No."] = data["Item No."]
 
         price_span = soup.find("span", class_="price")
         if price_span:
