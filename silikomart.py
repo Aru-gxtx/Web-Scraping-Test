@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import time
 import random
 import os
 import re
@@ -54,7 +53,6 @@ def get_product_links_from_category(category_url):
                 product_links.add(a['href'])
         
         print(f"    Found {len(product_links)} products in this category.")
-        time.sleep(1) 
             
     except Exception as e:
         print(f"  Error processing category: {e}")
@@ -63,7 +61,6 @@ def get_product_links_from_category(category_url):
 
 def scrape_single_product(product_url):
     try:
-        time.sleep(random.uniform(0.5, 1.5))
         r = requests.get(product_url, headers=HEADERS)
         if r.status_code != 200:
             return None
