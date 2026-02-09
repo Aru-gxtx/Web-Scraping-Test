@@ -60,7 +60,7 @@ pip install -r requirements.txt
 ### Installation & Usage
 
 1.  Clone the repository or download the scripts.
-2.  Run the specific script for the desired website (e.g., `meilleur_scraper.py`).
+2.  Run the specific script for the desired website (e.g., `meilleurduchef.py`).
 3.  Check the console for progress logs.
 4.  Find the output file in the newly created `results/` folder.
 
