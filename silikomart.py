@@ -23,6 +23,7 @@ def get_category_links():
         soup = BeautifulSoup(r.content, "lxml")
         category_links = set()
         
+        # Select both top-level and sub-categories
         items = soup.select('nav.navigation li.level0 > a')
         if not items:
             items = soup.select('div.category li.category a')
@@ -40,23 +41,45 @@ def get_category_links():
 
 def get_product_links_from_category(category_url):
     product_links = set()
+    # Start with limit=100 to reduce number of pages
+    current_url = f"{category_url}?product_list_limit=100"
+    
     print(f"Processing Category: {category_url}")
     
-    try:
-        start_url = f"{category_url}?product_list_limit=100"
-        r = requests.get(start_url, headers=HEADERS)
-        soup = BeautifulSoup(r.content, "lxml")
-        
-        items = soup.select("li.product-item a.product-item-photo")
-        for a in items:
-            if a.get('href'):
-                product_links.add(a['href'])
-        
-        print(f"    Found {len(product_links)} products in this category.")
+    while current_url:
+        try:
+            r = requests.get(current_url, headers=HEADERS)
+            if r.status_code != 200:
+                print(f"  Failed to load page: {r.status_code}")
+                break
             
-    except Exception as e:
-        print(f"  Error processing category: {e}")
-        
+            soup = BeautifulSoup(r.content, "lxml")
+            
+            # Find product links
+            items = soup.select("li.product-item a.product-item-photo")
+            if not items:
+                print("  No products found on this page.")
+                break
+                
+            new_found = 0
+            for a in items:
+                if a.get('href'):
+                    product_links.add(a['href'])
+                    new_found += 1
+            
+            print(f"   + Found {new_found} products (Total: {len(product_links)})")
+            
+            next_btn = soup.select_one("a.action.next")
+            
+            if next_btn and next_btn.get("href"):
+                current_url = next_btn["href"]
+            else:
+                current_url = None # Exit loop
+                
+        except Exception as e:
+            print(f"  Error processing page: {e}")
+            break
+            
     return list(product_links)
 
 def scrape_single_product(product_url):
@@ -80,12 +103,12 @@ def scrape_single_product(product_url):
             "Item Description": "N/A",
             "Stock Description": "N/A",
             "Warranty": "N/A",
-            "Serial Managed": "No",
-            "# List Price": "N/A",
-            "Main Category": "N/A",
-            "Sub1 Category": "N/A",
-            "Sub2 Category": "N/A",
-            "Short Description": "N/A"
+            "Serial Managed":
+            "No", "# List Price":
+            "N/A", "Main Category": "N/A",
+            "Sub1 Category":
+            "N/A", "Sub2 Category":
+            "N/A", "Short Description": "N/A"
         }
         
         h1 = soup.find("h1", class_="page-title")
@@ -93,6 +116,7 @@ def scrape_single_product(product_url):
             data["Item Description"] = h1.get_text(strip=True)
 
         try:
+            # Extract Data from dlObjects (Hidden JSON in Script)
             scripts = soup.find_all("script")
             for script in scripts:
                 if script.string and "dlObjects" in script.string:
@@ -104,11 +128,10 @@ def scrape_single_product(product_url):
                         if "ecommerce" in dl_data and "detail" in dl_data["ecommerce"]:
                             prod_info = dl_data["ecommerce"]["detail"]["products"][0]
                             
-                            # I read somewhere that Item No and MFR can often be the same
                             if "id" in prod_info:
                                 data["Item No."] = prod_info["id"]
                                 data["Mfr Catalog No."] = prod_info["id"]
-                          
+                           
                             if "dimension4" in prod_info:
                                 data["Stock Description"] = prod_info["dimension4"]
                                 if "In stock" in data["Stock Description"]:
@@ -129,7 +152,7 @@ def scrape_single_product(product_url):
         except:
             pass
 
-        # Failsafe for categories not found
+        # Failsafe for categories
         if data["Main Category"] == "N/A":
             crumbs = soup.select("div.breadcrumbs ul.items li.item")
             clean_crumbs = [c.get_text(strip=True) for c in crumbs if "Home" not in c.get_text()]
@@ -137,7 +160,7 @@ def scrape_single_product(product_url):
             if len(clean_crumbs) > 1: data["Sub1 Category"] = clean_crumbs[1]
             if len(clean_crumbs) > 2: data["Sub2 Category"] = clean_crumbs[2]
 
-        # Failsafe for SKU not found
+        # Failsafe for SKU / JSON-LD
         if data["Item No."] == "N/A":
             ld_scripts = soup.find_all("script", type="application/ld+json")
             for script in ld_scripts:
@@ -204,19 +227,16 @@ if __name__ == "__main__":
     
     all_product_links = set()
 
+    # I removed the 'break' here so it scrapes ALL categories, not just the first one.
     for cat in categories:
         links = get_product_links_from_category(cat)
         all_product_links.update(links)
-        if len(all_product_links):
-            break
         
     print(f"Total Unique Products Found: {len(all_product_links)}")
     
     all_data = []
     link_list = list(all_product_links)
-    
-    print(f"\n--- SCRAPING {len(link_list)} PRODUCTS (TEST LIMIT) ---")
-    
+ 
     for i, link in enumerate(link_list):
         print(f"[{i+1}/{len(link_list)}] Scraping: {link}")
         data = scrape_single_product(link)
@@ -227,17 +247,30 @@ if __name__ == "__main__":
         df = pd.DataFrame(all_data)
         
         cols = [
-            "Item No.", "Mfr Catalog No.", "Group Name", "Ecom Picture Name", 
-            "SAP Picture", "Inactive", "Indent Item", "# In Stock", 
-            "Production Date", "Item Description", "Stock Description", 
-            "Warranty", "Serial Managed", "# List Price", "Main Category", 
-            "Sub1 Category", "Sub2 Category", "Short Description"
+            "Item No.",
+            "Mfr Catalog No.",
+            "Group Name",
+            "Ecom Picture Name", 
+            "SAP Picture",
+            "Inactive",
+            "Indent Item",
+            "# In Stock", 
+            "Production Date",
+            "Item Description",
+            "Stock Description", 
+            "Warranty",
+            "Serial Managed",
+            "# List Price",
+            "Main Category", 
+            "Sub1 Category",
+            "Sub2 Category",
+            "Short Description"
         ]
         
         df = df.reindex(columns=cols, fill_value="N/A")
         
         folder_name = "results"
-        file_name = "Silikomart_Final_Test.xlsx"
+        file_name = "Silikomart_Final_Full.xlsx"
         
         if not os.path.exists(folder_name):
             os.makedirs(folder_name)

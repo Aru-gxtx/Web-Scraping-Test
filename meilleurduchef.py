@@ -56,12 +56,24 @@ def scrape_single_product(url):
         soup = BeautifulSoup(r.content, "lxml")
         
         data = {
-            "Item No.": "N/A", "Mfr Catalog No.": "N/A", "Group Name": "Silikomart",
-            "Ecom Picture Name": "N/A", "SAP Picture": "N/A", "Inactive": "No",
-            "Indent Item": "N/A", "# In Stock": "N/A", "Production Date": "N/A",
-            "Item Description": "N/A", "Stock Description": "N/A", "Warranty": "N/A",
-            "Serial Managed": "No", "# List Price": "N/A", "Main Category": "N/A",
-            "Sub1 Category": "N/A", "Sub2 Category": "N/A", "Short Description": "N/A"
+            "Item No.": "N/A",
+            "Mfr Catalog No.": "N/A",
+            "Group Name": "Silikomart",
+            "Ecom Picture Name": "N/A",
+            "SAP Picture": "N/A",
+            "Inactive": "No",
+            "Indent Item": "N/A",
+            "# In Stock": "N/A",
+            "Production Date": "N/A",
+            "Item Description": "N/A",
+            "Stock Description": "N/A",
+            "Warranty": "N/A",
+            "Serial Managed": "No",
+            "# List Price": "N/A",
+            "Main Category": "N/A",
+            "Sub1 Category": "N/A",
+            "Sub2 Category": "N/A",
+            "Short Description": "N/A"
         }
         
         scripts = soup.find_all("script", type="application/ld+json")
