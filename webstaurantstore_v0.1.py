@@ -35,7 +35,7 @@ try:
         if href:
             category_urls.add(href)
 
-    test_categories = list(category_urls)[:2]
+    test_categories = list(category_urls)
     print(f"Testing {len(test_categories)} categories...")
 
     for cat_url in test_categories:
