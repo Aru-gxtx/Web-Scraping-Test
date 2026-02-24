@@ -5,8 +5,8 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import os
 
-INPUT_FILE = 'results/STEELITE_Updated.xlsx'
-OUTPUT_FILE = 'results/STEELITE_Updated_v0.0.2.xlsx'
+INPUT_FILE = 'results/STEELITE_Updated_v0.0.2.xlsx'
+OUTPUT_FILE = 'results/STEELITE_Updated_v0.0.3.xlsx'
 
 def get_spec_value_webstaurant(driver, label_text):
     try:
@@ -40,7 +40,7 @@ options.add_argument('--headless')
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 try:
-    for index, row in df.iloc[542:].iterrows():
+    for index, row in df.iloc[2150:].iterrows():
         mfr_code = str(row['Mfr Catalog No.']).strip()
         if not mfr_code or mfr_code == 'nan' or mfr_code == "": continue
 
