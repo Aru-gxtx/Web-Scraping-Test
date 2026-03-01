@@ -98,3 +98,17 @@ class SteeliteDownloaderMiddleware:
 
     def spider_opened(self, spider):
         spider.logger.info("Spider opened: %s" % spider.name)
+
+
+class CustomHttpErrorMiddleware:
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls()
+
+    def process_response(self, request, response, spider):
+        # Process 403 Forbidden responses - don't ignore them
+        if response.status == 403:
+            spider.logger.warning(f"Got 403 response from {response.url}, but continuing anyway")
+            # Return the response instead of filtering it out
+            return response
+        return response
