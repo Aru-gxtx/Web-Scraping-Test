@@ -1,13 +1,15 @@
 import scrapy
-from scrapy import Request
+import csv
 import re
 import json
+from scrapy import Request
 
 
 class WilliamsfoodequipmentSpider(scrapy.Spider):
     name = "williamsfoodequipment"
     allowed_domains = ["williamsfoodequipment.com"]
     start_urls = ["https://williamsfoodequipment.com/search.php?search_query=Steelite+"]
+    csv_filename = "williamsfoodequipment_products.csv"
     
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
@@ -15,7 +17,13 @@ class WilliamsfoodequipmentSpider(scrapy.Spider):
             'http': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
         },
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
+        'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
+        'DOWNLOAD_DELAY': 2,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.product_data = []
 
     def start_requests(self):
         for url in self.start_urls:
@@ -27,12 +35,10 @@ class WilliamsfoodequipmentSpider(scrapy.Spider):
 
     def parse(self, response):
         product_links = response.css('li.klevuProduct a.klevuProductClick::attr(href)').getall()
-        self.logger.info(f"Found {len(product_links)} product links on {response.url}")
+        self.logger.info(f"Found {len(product_links)} product links")
         
-        # Remove duplicates and follow each product link
         for link in set(product_links):
             if link:
-                self.logger.info(f"Following product link: {link}")
                 yield Request(
                     url=response.urljoin(link),
                     callback=self.parse_product,
@@ -43,7 +49,6 @@ class WilliamsfoodequipmentSpider(scrapy.Spider):
         # Handle pagination if needed
         next_page = response.css('a.pagination-next::attr(href)').get()
         if next_page:
-            self.logger.info(f"Following pagination: {next_page}")
             yield Request(
                 url=response.urljoin(next_page),
                 callback=self.parse,
@@ -51,45 +56,31 @@ class WilliamsfoodequipmentSpider(scrapy.Spider):
             )
 
     def parse_product(self, response):
-        self.logger.info(f"Parsing product: {response.url}")
-        
-        def extract_spec(spec_name):
-            xpath = f"//td[contains(text(), '{spec_name}')]/following-sibling::td/text()"
-            value = response.xpath(xpath).get()
-            return value.strip() if value else None
+        product_name = (
+            response.css('h1.productView-title::text').get() or
+            response.xpath('//meta[@property="og:title"]/@content').get() or
+            response.css('h1::text').get() or
+            "N/A"
+        )
+        if isinstance(product_name, str):
+            product_name = product_name.strip()
 
-        # Extract product name
-        product_name = response.css('h1.productView-title::text').get()
-        if not product_name:
-            product_name = response.xpath('//meta[@property="og:title"]/@content').get()
-        if not product_name:
-            product_name = response.css('h1::text').get()
-        
-        self.logger.info(f"Product name: {product_name}")
-        
-        # Extract main product image
-        image_url = response.css('img.productView-image--default::attr(src)').get()
-        if not image_url:
-            image_url = response.xpath('//meta[@property="og:image"]/@content').get()
-        if not image_url:
-            image_url = response.css('img[class*="product"]::attr(src)').get()
-        
-        # Extract price
-        sale_price = response.css('span.productView-reviewPrice--salePrice::text').get()
-        regular_price = response.css('span.productView-reviewPrice--original::text').get()
-        
-        if not sale_price:
-            sale_price = response.xpath('//span[contains(@class, "sale")]/text()').get()
-        if not regular_price:
-            regular_price = response.xpath('//span[contains(@class, "original") or contains(@class, "regular")]/text()').get()
-        
-        # Extract product description/overview
-        overview = response.css('div.productView-description ::text').getall()
-        if not overview:
-            overview = response.css('div[class*="description"] ::text').getall()
-        overview = ' '.join([text.strip() for text in overview if text.strip()])
-        
-        # Extract all product specifications from the specifications table
+        image_url = (
+            response.css('img.productView-image--default::attr(src)').get() or
+            response.xpath('//meta[@property="og:image"]/@content').get() or
+            response.css('img[class*="product"]::attr(src)').get() or
+            "N/A"
+        )
+        if image_url and not image_url.startswith('http'):
+            image_url = response.urljoin(image_url)
+
+        overview_parts = response.css('div.productView-description ::text').getall()
+        if not overview_parts:
+            overview_parts = response.css('div[class*="description"] ::text').getall()
+        overview = ' '.join([text.strip() for text in overview_parts if text.strip()])
+        if len(overview) > 500:
+            overview = overview[:500] + "..."
+
         specs = {}
         spec_rows = response.css('table.table.table-striped.table-bordered tbody tr')
         
@@ -100,78 +91,89 @@ class WilliamsfoodequipmentSpider(scrapy.Spider):
             if spec_title and spec_value:
                 specs[spec_title.strip()] = spec_value.strip()
         
-        # Extract prioritized specifications
-        brand = specs.get('Brand')
-        series = specs.get('Series')
-        product_type = specs.get('Type')
-        capacity = specs.get('Capacity')
-        color = specs.get('Color')
-        material = specs.get('Material')
-        size = specs.get('Size')
-        case_pack_size = specs.get('Case Pack Size')
-        warranty = specs.get('Warranty')
+        # Extract specifications
+        color = specs.get('Color', 'N/A')
+        material = specs.get('Material', 'N/A')
+        capacity = specs.get('Capacity', 'N/A')
+        length = specs.get('Length', 'N/A')
+        width = specs.get('Width', 'N/A')
+        height = specs.get('Height', 'N/A')
+        volume = specs.get('Volume', specs.get('Capacity', 'N/A'))
+        diameter = specs.get('Diameter', 'N/A')
+        pattern = specs.get('Pattern', 'N/A')
         
-        # Extract dimension and volume specifications
-        length = specs.get('Length')
-        width = specs.get('Width')
-        height = specs.get('Height')
-        volume = specs.get('Volume')
-        diameter = specs.get('Diameter')
-        pattern = specs.get('Pattern')
-        
-        # Extract identifiers and codes
+        # Extract codes
         sku = response.xpath('//span[contains(text(), "SKU:")]/following-sibling::span/text()').get()
         if not sku:
-            sku = response.css('span.product_sku::text').get()
+            sku = response.css('span.product_sku::text').get() or "N/A"
+
+        mfr = specs.get('MFR') or specs.get('Manufacturer Code') or specs.get('Mfr') or sku or "N/A"
         
-        # Extract MFR (manufacturer code) from BCData JavaScript object
-        mfr = specs.get('MFR') or specs.get('Manufacturer Code') or specs.get('Mfr')
-        if not mfr:
-            # Extract from BCData JSON in script tag
+        # Try to extract from BCData JavaScript
+        if mfr == "N/A":
             bcdata_script = response.xpath('//script[contains(text(), "var BCData")]/text()').get()
             if bcdata_script:
-                # Extract the JSON part from: var BCData = {...};
-                match = re.search(r'var BCData = ({.*?});', bcdata_script, re.DOTALL)
-                if match:
-                    try:
+                try:
+                    match = re.search(r'var BCData = ({.*?});', bcdata_script, re.DOTALL)
+                    if match:
                         bcdata = json.loads(match.group(1))
-                        mfr = bcdata.get('product_attributes', {}).get('mpn')
-                    except json.JSONDecodeError:
-                        self.logger.warning(f"Failed to parse BCData JSON on {response.url}")
-        
-        # Extract EAN/Barcode codes
-        ean_code = specs.get('EAN Code') or specs.get('EAN') or specs.get('EAN13')
-        barcode = specs.get('Barcode') or specs.get('UPC') or specs.get('Barcode/EAN')
-        
-        # Extract stock availability
-        availability = response.xpath('//meta[@property="og:availability"]/@content').get()
-        in_stock = availability == 'instock' if availability else None
-        
-        # Return prioritized fields
-        yield {
-            'product_name': product_name.strip() if product_name else None,
-            'url': response.url,
+                        mfr = bcdata.get('product_attributes', {}).get('mpn', 'N/A')
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+        ean_code = specs.get('EAN Code') or specs.get('EAN') or specs.get('EAN13') or 'N/A'
+        barcode = specs.get('Barcode') or specs.get('UPC') or specs.get('Barcode/EAN') or 'N/A'
+
+        product = {
+            'name': product_name,
+            'item_sku': sku,
+            'model_number': specs.get('Model', 'N/A'),
+            'manufacturer': mfr,
             'image_link': image_url,
-            'overview': overview if overview else None,
+            'overview': overview or 'N/A',
+            'material': material,
+            'color': color,
+            'pattern': pattern,
             'length': length,
             'width': width,
             'height': height,
-            'volume': volume,
+            'volume_capacity': volume,
             'diameter': diameter,
-            'color': color,
-            'material': material,
+            'country_of_origin': specs.get('Country of Origin', 'N/A'),
+            'upc_barcode': barcode,
             'ean_code': ean_code,
-            'pattern': pattern,
-            'barcode': barcode,
-            'mfr': mfr,
-            'sku': sku,
-            'brand': brand,
-            'series': series,
-            'type': product_type,
-            'capacity': capacity,
-            'case_pack_size': case_pack_size,
-            'warranty': warranty,
-            'sale_price': sale_price.strip() if sale_price else None,
-            'regular_price': regular_price.strip() if regular_price else None,
-            'in_stock': in_stock,
+            'hazmat': specs.get('Hazmat', 'N/A'),
+            'oversize': specs.get('Oversize', 'N/A'),
+            'marketplace_uom': specs.get('UOM', 'N/A'),
+            'product_url': response.url,
         }
+
+        self.product_data.append(product)
+        self.logger.info(f"✓ Scraped: {product_name}")
+        yield product
+
+    def closed(self, reason):
+        self.save_to_csv(self.csv_filename)
+        self.logger.info(f"Total products scraped: {len(self.product_data)}")
+
+    def save_to_csv(self, filename):
+        if not self.product_data:
+            self.logger.info("No product data to save")
+            return
+        
+        fieldnames = [
+            'name', 'item_sku', 'model_number', 'manufacturer',
+            'image_link', 'overview', 'material', 'color', 'pattern',
+            'length', 'width', 'height', 'volume_capacity', 'diameter',
+            'country_of_origin', 'upc_barcode', 'ean_code',
+            'hazmat', 'oversize', 'marketplace_uom', 'product_url'
+        ]
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.product_data)
+            self.logger.info(f"✓ Saved {len(self.product_data)} products to {filename}")
+        except Exception as e:
+            self.logger.error(f"Error saving to CSV: {e}")

@@ -1,5 +1,6 @@
 import re
 import scrapy
+import csv
 from scrapy_playwright.page import PageMethod
 
 
@@ -7,6 +8,11 @@ class SteelitePlaywrightSpider(scrapy.Spider):
     name = "steelite_playwright"
     allowed_domains = ["steelite-utopia.com"]
     start_urls = ["https://www.steelite-utopia.com/products"]
+    csv_filename = "utopia_products.csv"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.product_data = []
 
     def start_requests(self):
         for url in self.start_urls:
@@ -24,7 +30,7 @@ class SteelitePlaywrightSpider(scrapy.Spider):
 
     def parse(self, response):
         cards = response.css("a.product-entry-grid")
-        self.logger.info(f"Found cards: {len(cards)}")
+        self.logger.info(f"Found {len(cards)} products")
 
         for c in cards:
             href = c.attrib.get("href")
@@ -59,7 +65,7 @@ class SteelitePlaywrightSpider(scrapy.Spider):
         info_values = response.css(".popup[data-key='productCard'] .info-details > .info-value::text").getall()
         info_values = [v.strip() for v in info_values if v and v.strip()]
 
-        product_code = info_values[0] if len(info_values) > 0 else response.meta.get("listing_code")
+        product_code = info_values[0] if len(info_values) > 0 else response.meta.get("listing_code", "N/A")
         overview = info_values[1] if len(info_values) > 1 else None
 
         image_link = response.css(".popup[data-key='productCard'] img.info-image-inner::attr(src)").get()
@@ -73,53 +79,89 @@ class SteelitePlaywrightSpider(scrapy.Spider):
                 kv[k] = v
 
         # direct fields
-        material = kv.get("material")
-        color = kv.get("colour") or kv.get("color")
-        barcode = kv.get("outer barcode") or kv.get("barcode")
-        ean_code = kv.get("ean code") or kv.get("ean")
-        pattern = kv.get("pattern")
+        material = kv.get("material", "N/A")
+        color = kv.get("colour") or kv.get("color") or "N/A"
+        barcode = kv.get("outer barcode") or kv.get("barcode") or "N/A"
+        ean_code = kv.get("ean code") or kv.get("ean") or "N/A"
+        pattern = kv.get("pattern", "N/A")
 
-        # optional dimensions (if present in keys)
-        length = kv.get("length")
-        width = kv.get("width")
-        height = kv.get("height")
-        diameter = kv.get("diameter")
-        volume = kv.get("volume")
+        # optional dimensions
+        length = kv.get("length", "N/A")
+        width = kv.get("width", "N/A")
+        height = kv.get("height", "N/A")
+        diameter = kv.get("diameter", "N/A")
+        volume_capacity = kv.get("volume", "N/A")
 
         # fallback parse from title if missing
-        if not (length and width and height):
+        if length == "N/A" or width == "N/A" or height == "N/A":
             dim3 = self._extract_measure(title, r"(\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm)")
             if dim3:
                 parts = re.findall(r"\d+(?:\.\d+)?", dim3)
                 if len(parts) >= 3:
-                    length = length or f"{parts[0]} cm"
-                    width = width or f"{parts[1]} cm"
-                    height = height or f"{parts[2]} cm"
+                    length = length if length != "N/A" else f"{parts[0]} cm"
+                    width = width if width != "N/A" else f"{parts[1]} cm"
+                    height = height if height != "N/A" else f"{parts[2]} cm"
 
-        if not diameter:
+        if diameter == "N/A":
             d = self._extract_measure(title, r"(\d+(?:\.\d+)?)\s*cm")
             if d:
                 diameter = f"{d} cm"
 
-        if not volume:
+        if volume_capacity == "N/A":
             v = self._extract_measure(title, r"(\d+(?:\.\d+)?\s*(?:cl|ml|l|ltr|oz))")
             if v:
-                volume = v
+                volume_capacity = v
 
-        yield {
-            "product_url": response.url,
-            "product_name": title or response.meta.get("listing_name"),
-            "product_code": product_code,
-            "image_link": image_link,
-            "overview": overview,
+        product = {
+            "name": title or response.meta.get("listing_name", "N/A"),
+            "item_sku": product_code,
+            "model_number": "N/A",
+            "manufacturer": product_code,
+            "image_link": image_link or "N/A",
+            "overview": overview or "N/A",
+            "material": material,
+            "color": color,
+            "pattern": pattern,
             "length": length,
             "width": width,
             "height": height,
-            "volume": volume,
+            "volume_capacity": volume_capacity,
             "diameter": diameter,
-            "color": color,
-            "material": material,
+            "country_of_origin": "N/A",
+            "upc_barcode": barcode,
             "ean_code": ean_code,
-            "pattern": pattern,
-            "barcode": barcode,
+            "hazmat": "N/A",
+            "oversize": "N/A",
+            "marketplace_uom": "N/A",
+            "product_url": response.url,
         }
+
+        self.product_data.append(product)
+        self.logger.info(f"✓ Scraped: {product['name']}")
+        yield product
+
+    def closed(self, reason):
+        self.save_to_csv(self.csv_filename)
+        self.logger.info(f"Total products scraped: {len(self.product_data)}")
+
+    def save_to_csv(self, filename):
+        if not self.product_data:
+            self.logger.info("No product data to save")
+            return
+        
+        fieldnames = [
+            'name', 'item_sku', 'model_number', 'manufacturer',
+            'image_link', 'overview', 'material', 'color', 'pattern',
+            'length', 'width', 'height', 'volume_capacity', 'diameter',
+            'country_of_origin', 'upc_barcode', 'ean_code',
+            'hazmat', 'oversize', 'marketplace_uom', 'product_url'
+        ]
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.product_data)
+            self.logger.info(f"✓ Saved {len(self.product_data)} products to {filename}")
+        except Exception as e:
+            self.logger.error(f"Error saving to CSV: {e}")

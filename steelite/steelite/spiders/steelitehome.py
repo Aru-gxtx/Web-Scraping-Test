@@ -1,5 +1,6 @@
 import re
 import scrapy
+import csv
 from scrapy_playwright.page import PageMethod
 
 
@@ -7,11 +8,16 @@ class SteelitehomeSpider(scrapy.Spider):
     name = "steelitehome"
     allowed_domains = ["www.steelitehome.com"]
     start_urls = ["https://www.steelitehome.com"]
+    csv_filename = "steelitehome_products.csv"
 
     custom_settings = {
         'CONCURRENT_REQUESTS': 1,
         'DOWNLOAD_DELAY': 2,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.product_data = []
 
     def start_requests(self):
         for url in self.start_urls:
@@ -29,7 +35,6 @@ class SteelitehomeSpider(scrapy.Spider):
 
     def parse_categories(self, response):
         category_links = response.css("a.slide::attr(href)").getall()
-        
         self.logger.info(f"Found {len(category_links)} main categories")
         
         for link in category_links:
@@ -48,8 +53,7 @@ class SteelitehomeSpider(scrapy.Spider):
 
     def parse_subcategories(self, response):
         range_links = response.css("a.rangeBox::attr(href)").getall()
-        
-        self.logger.info(f"Found {len(range_links)} ranges in {response.url}")
+        self.logger.info(f"Found {len(range_links)} ranges")
         
         for link in range_links:
             range_url = response.urljoin(link)
@@ -67,8 +71,7 @@ class SteelitehomeSpider(scrapy.Spider):
 
     def parse_product_list(self, response):
         product_cards = response.css("div.productBox")
-        
-        self.logger.info(f"Found {len(product_cards)} products in {response.url}")
+        self.logger.info(f"Found {len(product_cards)} products")
         
         for card in product_cards:
             product_url = card.css("a::attr(href)").get()
@@ -95,32 +98,26 @@ class SteelitehomeSpider(scrapy.Spider):
         attributes_text = " ".join(attributes_text)
         
         if attributes_text:
-            # Extract Product Code - clean whitespace and newlines
             code_match = re.search(r'Product Code:\s*(\S+)', attributes_text, re.I)
             if code_match:
                 product_code = code_match.group(1).strip().replace('\n', '').replace('<br', '')
             
-            # Extract Item name
             item_match = re.search(r'Item:\s*(.+?)(?=<br|$)', attributes_text, re.I)
             if item_match:
                 item_name = item_match.group(1).strip()
             
-            # Extract Colour
             colour_match = re.search(r'Colour:\s*(.+?)(?=<br|$)', attributes_text, re.I)
             if colour_match:
                 color = colour_match.group(1).strip()
 
-        # Product name from h1
         product_name = response.css("#productTop h1::text").get()
         if product_name:
             product_name = product_name.strip()
 
-        # Image link - first image in gallery
         image_link = response.css(".owl-carousel.gallery a.thumbnail::attr(href)").get()
         if image_link:
             image_link = response.urljoin(image_link)
 
-        # Material, Pattern, Range from specification table
         material = None
         pattern = None
         ean_code = None
@@ -144,43 +141,59 @@ class SteelitehomeSpider(scrapy.Spider):
                 elif 'barcode' in label_lower:
                     barcode = value_clean
 
-        # Overview/Description from long description section
         overview = response.css("#longDescription .wysiwyg p::text").getall()
         overview = " ".join([p.strip() for p in overview if p.strip()]) if overview else None
 
-        # Dimensions from product name (if present)
-        length = None
-        width = None
-        height = None
-        diameter = None
-        volume = None
-
-        # Try to extract dimensions from product name
-        if product_name:
-            # Look for patterns like "13cm (5")" or "28cm x 22cm"
-            dim_match = re.search(r'(\d+(?:\.\d+)?)\s*cm', product_name, re.I)
-            if dim_match:
-                diameter = f"{dim_match.group(1)} cm"
-            
-            # Look for volume patterns like "43.5cl" or "(15 1/3oz)"
-            vol_match = re.search(r'(\d+(?:\.\d+)?(?:\s*\d+/\d+)?)\s*(cl|ml|oz)', product_name, re.I)
-            if vol_match:
-                volume = f"{vol_match.group(1)} {vol_match.group(2)}"
-
-        yield {
+        product = {
+            "name": product_name or item_name or "N/A",
+            "item_sku": product_code or "N/A",
+            "model_number": "N/A",
+            "manufacturer": product_code or "N/A",
+            "image_link": image_link or "N/A",
+            "overview": overview or "N/A",
+            "material": material or "N/A",
+            "color": color or "N/A",
+            "pattern": pattern or "N/A",
+            "length": "N/A",
+            "width": "N/A",
+            "height": "N/A",
+            "volume_capacity": "N/A",
+            "diameter": "N/A",
+            "country_of_origin": "N/A",
+            "upc_barcode": barcode or "N/A",
+            "ean_code": ean_code or "N/A",
+            "hazmat": "N/A",
+            "oversize": "N/A",
+            "marketplace_uom": "N/A",
             "product_url": response.url,
-            "product_name": product_name or item_name,
-            "product_code": product_code,
-            "image_link": image_link,
-            "overview": overview,
-            "length": length,
-            "width": width,
-            "height": height,
-            "volume": volume,
-            "diameter": diameter,
-            "color": color,
-            "material": material,
-            "ean_code": ean_code,
-            "pattern": pattern,
-            "barcode": barcode,
         }
+        
+        self.product_data.append(product)
+        self.logger.info(f"✓ Scraped: {product['name']}")
+        yield product
+
+    def closed(self, reason):
+        self.save_to_csv(self.csv_filename)
+        self.logger.info(f"Total products scraped: {len(self.product_data)}")
+
+    def save_to_csv(self, filename):
+        if not self.product_data:
+            self.logger.info("No product data to save")
+            return
+        
+        fieldnames = [
+            'name', 'item_sku', 'model_number', 'manufacturer',
+            'image_link', 'overview', 'material', 'color', 'pattern',
+            'length', 'width', 'height', 'volume_capacity', 'diameter',
+            'country_of_origin', 'upc_barcode', 'ean_code',
+            'hazmat', 'oversize', 'marketplace_uom', 'product_url'
+        ]
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.product_data)
+            self.logger.info(f"✓ Saved {len(self.product_data)} products to {filename}")
+        except Exception as e:
+            self.logger.error(f"Error saving to CSV: {e}")
