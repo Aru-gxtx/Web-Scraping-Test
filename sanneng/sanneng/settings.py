@@ -18,25 +18,36 @@ ADDONS = {}
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = "sanneng (+http://www.yourdomain.com)"
 
-# Obey robots.txt rules
-ROBOTSTXT_OBEY = True
+# Obey robots.txt rules - DISABLED for better scraping
+ROBOTSTXT_OBEY = False
 
 # Concurrency and throttling settings
-#CONCURRENT_REQUESTS = 16
+CONCURRENT_REQUESTS = 4
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
-DOWNLOAD_DELAY = 1
+DOWNLOAD_DELAY = 2
+RANDOMIZE_DOWNLOAD_DELAY = True
 
-# Disable cookies (enabled by default)
-#COOKIES_ENABLED = False
+# Cookies enabled
+COOKIES_ENABLED = True
 
-# Disable Telnet Console (enabled by default)
-#TELNETCONSOLE_ENABLED = False
+# Retries for failed requests
+RETRY_TIMES = 3
+RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429]
 
-# Override the default request headers:
-#DEFAULT_REQUEST_HEADERS = {
-#    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-#    "Accept-Language": "en",
-#}
+# Override the default request headers to mimic real browser
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Cache-Control": "max-age=0",
+}
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
@@ -85,3 +96,24 @@ DOWNLOAD_DELAY = 1
 
 # Set settings whose default value is deprecated to a future-proof value
 FEED_EXPORT_ENCODING = "utf-8"
+
+# Enable Playwright for JavaScript rendering on specific sites
+DOWNLOAD_HANDLERS = {
+    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+}
+
+# Playwright configuration
+PLAYWRIGHT_BROWSER_TYPE = "chromium"
+PLAYWRIGHT_LAUNCH_ARGS = {
+    "headless": True,
+    "args": [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-http2",
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+    ]
+}
+
+# Wait for selector to load before scraping
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000

@@ -4,7 +4,7 @@ import re
 
 
 class UnopanSpider(scrapy.Spider):
-    name = "unopan"
+    name = "unopan_v2"
     allowed_domains = ["unopan.tw", "www.unopan.tw"]
     custom_settings = {
         'DOWNLOAD_DELAY': 3,
@@ -12,19 +12,18 @@ class UnopanSpider(scrapy.Spider):
     }
     
     def start_requests(self):
+        # Unopan uses JavaScript - request with Playwright
         url = "https://www.unopan.tw/search?q=SANNENG"
         yield scrapy.Request(
             url,
             callback=self.parse,
-            meta={
-                'playwright': True,
-                'playwright_include_page': False,
-            }
+            meta={'playwright': True}
         )
     
     def parse(self, response):
         self.logger.info(f"Parsing Unopan search - Status: {response.status}")
         
+        # Extract product links
         product_links = response.css('a[href*="/product"]::attr(href)').getall()
         if not product_links:
             product_links = response.css('div.item a::attr(href)').getall()
@@ -38,21 +37,8 @@ class UnopanSpider(scrapy.Spider):
             yield scrapy.Request(
                 link,
                 callback=self.parse_product,
-                meta={'playwright': True, 'playwright_include_page': False}
+                meta={'playwright': True}
             )
-
-    def extract_image(self, response):
-        selectors = [
-            'meta[property="og:image"]::attr(content)',
-            'meta[name="twitter:image"]::attr(content)',
-            'img[alt*="product"]::attr(src)',
-            'img::attr(src)',
-        ]
-        for selector in selectors:
-            image = response.css(selector).get()
-            if image:
-                return response.urljoin(image)
-        return 'N/A'
     
     def parse_product(self, response):
         try:
@@ -80,7 +66,10 @@ class UnopanSpider(scrapy.Spider):
                     product['sku'] = 'N/A'
             
             # Image
-            product['image_link'] = self.extract_image(response)
+            image = response.css('img[alt*="product"]::attr(src)').get()
+            if not image:
+                image = response.css('meta[property="og:image"]::attr(content)').get()
+            product['image_link'] = image if image else 'N/A'
             
             # Description
             description = response.css('div.description::text').getall()

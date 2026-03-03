@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 SANNENG_DIR = PROJECT_ROOT / "sanneng"
 ARRANGER_SCRIPT = PROJECT_ROOT / "sanneng_arranger_xlsx.py"
+ADDON_SCRIPT = PROJECT_ROOT / "search_addon_enrichment.py"
 
 # Define spider names and their output files
 SPIDERS = [
@@ -47,7 +48,7 @@ def check_prerequisites():
     # Check if scrapy is installed
     try:
         result = subprocess.run(
-            ["scrapy", "version"],
+            [sys.executable, "-m", "scrapy", "version"],
             capture_output=True,
             text=True
         )
@@ -67,6 +68,12 @@ def check_prerequisites():
         print(f"Arranger script not found: {ARRANGER_SCRIPT}")
         return False
     print(f"✓ Arranger script found: {ARRANGER_SCRIPT}")
+
+    # Check if addon script exists
+    if not ADDON_SCRIPT.exists():
+        print(f"SKU search add-on script not found: {ADDON_SCRIPT}")
+        return False
+    print(f"✓ SKU search add-on script found: {ADDON_SCRIPT}")
     
     return True
 
@@ -81,7 +88,7 @@ def run_spiders():
         start_time = time.time()
         
         # Run the spider
-        cmd = ["scrapy", "crawl", spider_name, "-O", output_file]
+        cmd = [sys.executable, "-m", "scrapy", "crawl", spider_name, "-O", output_file]
         success = run_command(cmd, cwd=SANNENG_DIR)
         
         elapsed = time.time() - start_time
@@ -124,7 +131,24 @@ def run_arranger():
     
     return success
 
-def print_summary(spider_results, arranger_success):
+
+def run_search_addon():
+    print("\n" + "="*60)
+    print("RUNNING SKU SEARCH ADD-ON")
+    print("="*60 + "\n")
+
+    cmd = [sys.executable, str(ADDON_SCRIPT)]
+    success = run_command(cmd, cwd=PROJECT_ROOT)
+
+    if success:
+        print("\n✓ SKU search add-on completed")
+        print("  Check: sanneng/addon_search_products.csv")
+    else:
+        print("\nSKU search add-on failed")
+
+    return success
+
+def print_summary(spider_results, addon_success, arranger_success):
     print("\n" + "="*60)
     print("EXECUTION SUMMARY")
     print("="*60)
@@ -139,10 +163,11 @@ def print_summary(spider_results, arranger_success):
     print(f"\nTotal spider time: {total_time:.1f}s")
     
     print(f"\nExcel Arranger: {'SUCCESS' if arranger_success else 'FAILED'}")
+    print(f"SKU Search Add-on: {'SUCCESS' if addon_success else 'FAILED'}")
     
     # Final status
     all_spiders_ok = all(r["success"] for r in spider_results.values())
-    if all_spiders_ok and arranger_success:
+    if all_spiders_ok and arranger_success and addon_success:
         print("\nALL OPERATIONS COMPLETED SUCCESSFULLY")
         return True
     else:
@@ -161,25 +186,18 @@ def main():
     
     # Run all spiders
     spider_results = run_spiders()
-    
-    # Ask if user wants to run arranger
-    print("\n" + "-"*60)
-    response = input("Run Excel arranger now? (Y/n): ").strip().lower()
-    
-    if response in ["", "y", "yes"]:
-        arranger_success = run_arranger()
-    else:
-        print("\nSkipping arranger. You can run it manually later:")
-        print(f"  python {ARRANGER_SCRIPT}")
-        arranger_success = None
+
+    # Run search add-on enrichment
+    addon_success = run_search_addon()
+
+    arranger_success = run_arranger()
     
     # Print summary
-    print_summary(spider_results, arranger_success if arranger_success is not None else False)
+    print_summary(spider_results, addon_success, arranger_success)
     
     # Exit with appropriate code
     all_success = all(r["success"] for r in spider_results.values())
-    if arranger_success is not None:
-        all_success = all_success and arranger_success
+    all_success = all_success and addon_success and arranger_success
     
     sys.exit(0 if all_success else 1)
 

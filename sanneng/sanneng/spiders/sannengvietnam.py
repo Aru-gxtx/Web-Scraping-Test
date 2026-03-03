@@ -1,6 +1,7 @@
 import scrapy
 import csv
 import re
+import json
 
 
 class SannengvietnamSpider(scrapy.Spider):
@@ -44,8 +45,8 @@ class SannengvietnamSpider(scrapy.Spider):
                 product['sku'] = sku_match.group(1)
         
         if 'sku' not in product or not product.get('sku'):
-            # Try from URL
-            url_sku = re.search(r'(sn\w+)', response.url, re.I)
+            # Try from URL - match SN, UN, or other 2-letter + number patterns
+            url_sku = re.search(r'([a-z]{2}\d+\w*)', response.url, re.I)
             if url_sku:
                 product['sku'] = url_sku.group(1).upper()
             else:
@@ -56,11 +57,22 @@ class SannengvietnamSpider(scrapy.Spider):
                response.css('h1::text').get()
         product['name'] = name.strip() if name else 'N/A'
         
-        # Image link
-        image = response.css('div.large-image img::attr(src)').get() or \
-                response.css('div.product-photos img::attr(src)').get()
+        # Image link - primary selector with meta fallbacks
+        image = response.css('div.large-image img::attr(src)').get()
+        if not image:
+            image = response.css('div.product-photos img::attr(src)').get()
+        if not image:
+            image = response.css('img.product-featured-media::attr(src)').get()
+        if not image:
+            image = response.css('meta[property="og:image"]::attr(content)').get()
+        if not image:
+            image = response.css('meta[name="twitter:image"]::attr(content)').get()
+
         if image and image.startswith('//'):
             image = 'https:' + image
+        elif image and image.startswith('/'):
+            image = response.urljoin(image)
+
         product['image_link'] = image if image else 'N/A'
         
         # Overview - from meta description

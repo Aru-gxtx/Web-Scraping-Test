@@ -2,6 +2,7 @@ import pandas as pd
 import glob
 import os
 from pathlib import Path
+import re
 
 
 def load_all_scraped_data():
@@ -10,7 +11,8 @@ def load_all_scraped_data():
         'sanneng/sannengvietnam_products.csv',
         'sanneng/tokopedia_products.csv',
         'sanneng/unopan_products.csv',
-        'sanneng/coupang_products.csv'
+        'sanneng/coupang_products.csv',
+        'sanneng/addon_search_products.csv'
     ]
     
     all_data = []
@@ -40,7 +42,31 @@ def load_all_scraped_data():
 def normalize_sku(sku):
     if pd.isna(sku):
         return None
-    return str(sku).strip().upper()
+    value = str(sku).strip().upper()
+    if not value or value in {"N/A", "NAN", "NONE"}:
+        return None
+
+    value = value.replace(" ", "")
+    extracted = re.search(r"SN\d+[A-Z0-9-]*", value)
+    if extracted:
+        return extracted.group(0)
+
+    return value
+
+
+def normalize_image_link(link):
+    if pd.isna(link):
+        return 'N/A'
+    value = str(link).strip()
+    if not value or value.upper() in {"N/A", "NONE", "NAN"}:
+        return 'N/A'
+    if value.startswith('//'):
+        return f"https:{value}"
+    return value
+
+
+def row_has_valid_image(row):
+    return normalize_image_link(row.get('image_link', 'N/A')) != 'N/A'
 
 
 def populate_excel(excel_path, scraped_data):
@@ -70,11 +96,23 @@ def populate_excel(excel_path, scraped_data):
     df_excel['_normalized_sku'] = df_excel[mfr_column].apply(normalize_sku)
     scraped_data['_normalized_sku'] = scraped_data['sku'].apply(normalize_sku)
     
-    # Create a mapping from SKU to scraped data (take the first match for each SKU)
+    # Normalize image links early
+    if 'image_link' in scraped_data.columns:
+        scraped_data['image_link'] = scraped_data['image_link'].apply(normalize_image_link)
+
+    # Create a mapping from SKU to scraped data, preferring rows with valid image links
     sku_to_data = {}
     for _, row in scraped_data.iterrows():
         sku = row['_normalized_sku']
-        if sku and sku not in sku_to_data:
+        if not sku:
+            continue
+
+        if sku not in sku_to_data:
+            sku_to_data[sku] = row
+            continue
+
+        existing = sku_to_data[sku]
+        if row_has_valid_image(row) and not row_has_valid_image(existing):
             sku_to_data[sku] = row
     
     print(f"\nUnique SKUs in scraped data: {len(sku_to_data)}")
@@ -134,6 +172,9 @@ def populate_excel(excel_path, scraped_data):
             for scraped_col, excel_col_letter in column_mapping.items():
                 excel_col_name = col_names[excel_col_letter]
                 value = scraped_row.get(scraped_col, 'N/A')
+
+                if scraped_col == 'image_link':
+                    value = normalize_image_link(value)
                 
                 # Only populate if current value is empty/None
                 if pd.isna(df_excel.at[idx, excel_col_name]) or df_excel.at[idx, excel_col_name] == '':
